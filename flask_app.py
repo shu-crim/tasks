@@ -41,7 +41,7 @@ class Page(Enum):
 
 # Flaskオブジェクトの生成
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 #ファイルサイズ制限 2MB
+app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024 #ファイルサイズ制限 256MB
 app.config['SECRET_KEY'] = 'secret key here'
 
 
@@ -277,6 +277,36 @@ def CreateRecordTableRow(submit:Submit, visible_invalid_data:bool=False, user_na
                             # Questであれば存在せず、Contestであれば期間終了後にロック解除
                             if submit.task.afterContest(): 
                                 html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.test, submit.task.goal)}>{submit.stats.test*100:.1f}(登録率) <a href="/detail/{submit.task.id}/{submit.stats.userid}/{submit.stats.datetime.strftime("%Y%m%d_%H%M%S")}/test" class="link-info">●</a></td>'
+                                unlock = True
+                        if not unlock:
+                            html_temp += f'<td>?</td>'
+                            
+        elif submit.task.metric == Task.Metric.AverageF1Score:
+            # Goal:選択
+            if goal:
+                html_temp += f'<td>平均F1スコア <span style="color:#0dcaf0">{submit.task.goal:.3f}</span> 以上 {submit.task.achieveStarHTML(submit.stats)}</td>'
+
+            # invalid判定
+            if submit.stats.train < 0:
+                if visible_invalid_data:
+                    html_temp += '<td>-</td><td>-</td>' if not test else '<td>-</td><td>-</td><td>-</td>'
+                else:
+                    return ""
+                
+            else:
+                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.train, submit.task.goal)}>{submit.stats.train:.3f}(F1)</td>'
+                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.valid, submit.task.goal)}>{submit.stats.valid:.3f}(F1)</td>'
+                
+                # Test:選択
+                if test:
+                    if submit.task.type == Task.TaskType.Quest:
+                        html_temp += '<td>-</td>'
+                    elif submit.task.type == Task.TaskType.Contest:
+                        unlock = False
+                        if submit.task.achieve(submit.stats):
+                            # Questであればいつでも、Contestであれば期間終了後にロック解除
+                            if submit.task.afterContest(): 
+                                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.test, submit.task.goal)}>{submit.stats.test:.3f}(F1)</td>'
                                 unlock = True
                         if not unlock:
                             html_temp += f'<td>?</td>'
@@ -1020,6 +1050,12 @@ def upload_file(task_id):
             if not verified:
                 msg = "ユーザ認証に失敗しました。"
             else:
+                if 'attachment' in request.files and request.files['attachment'].filename != '':
+                    # 添付ファイルがある場合
+                    attachment = request.files['attachment']
+                else:
+                    attachment = None
+
                 try:
                     save_dir = os.path.join(Task.TASKS_DIR, task_id, Task.UPLOAD_DIR_NAME, user_id)
 
@@ -1030,7 +1066,13 @@ def upload_file(task_id):
                     if os.path.exists(save_dir):
                         new_filename = secure_filename(file.filename)
                         file.save(os.path.join(save_dir, new_filename))
-                        msg = f'{file.filename}がアップロードされました。'
+                        msg = f'{file.filename} がアップロードされました。'
+
+                        if attachment is not None:
+                            # 添付ファイルがある場合は保存
+                            attachment_filename = secure_filename(attachment.filename)
+                            attachment.save(os.path.join(save_dir, new_filename + '.attachment'))
+                            msg += f' 添付ファイル {attachment_filename} もアップロードされました。'
 
                         # メモを保存
                         if request.form['memo'] != "":
@@ -1049,7 +1091,8 @@ def upload_file(task_id):
                            user_id=user_data.id, user_key=user_data.key,
                            menu=menuHTML(Page.UPLOAD, task_id, url_from=f"/{task_id}/upload", admin=admin, user_name=user_data.name if verified else ''),
                            service_name=SETTING["name"]["service"],
-                           url_from=f"/{task_id}/upload", time_limit=task.timelimit_per_data)
+                           url_from=f"/{task_id}/upload", time_limit=task.timelimit_per_data,
+                           attachment=task.attachment)
   
 
 @app.route('/<task_id>/admin')
@@ -1277,4 +1320,4 @@ if __name__ == "__main__":
     TASK = Task.readTasks()
 
     # アプリ開始
-    app.run(debug=False, host='0.0.0.0', port=50000)
+    app.run(debug=False, host='0.0.0.0', port=80)

@@ -12,11 +12,14 @@ from multiprocessing import Pool, TimeoutError
 import traceback
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
-from module.task import Task, Log
 import chardet
 import random
 import cv2
 import sklearn.metrics
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics import f1_score
+from module.task import Task, Log
+from module.image import ImageProc
 
 
 FILENAME_DATASET_JSON = r"dataset.json"
@@ -68,6 +71,8 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
                 correct_list.append(int(item["gt"]))
             elif answer_value_type == Task.AnswerValueType.ActiveLearing:
                 correct_list.append(item["gt"])
+            elif answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                correct_list.append(item["gt"])
 
             # 入力データ
             data = []
@@ -88,7 +93,11 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
                         image = Image.open(os.path.join(os.path.dirname(path_json), path))
                         if input_data_type == Task.InputDataType.Image1ch:
                             image = image.convert("L")
-                        data.append(np.array(image))
+                        image = np.array(image)
+                        if answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                            # 特徴抽出の場合は画像を切り抜いてサイズを合わせる
+                            image = ImageProc.center_crop(image)  # 画像を中心で切り抜き
+                        data.append(image)
                 else:
                     # 画像読み込み
                     filename = item["path"]
@@ -103,8 +112,8 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
             else:
                 input_data_list.append(data)
 
-            # Active learing Taskの場合、学習データをパラメータとして読み込む
             if answer_value_type == Task.AnswerValueType.ActiveLearing:
+                # Active learing Taskの場合、学習データをパラメータとして読み込む
                 parameter = [[], [], 0] #[入力データのリスト, ラベルのリスト, P/R目標値]
                 if input_data_type == Task.InputDataType.Vector:
                     # ベクトル読み込み
@@ -117,6 +126,10 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
                 parameter[2] = item["goal"]
 
                 # データ追加
+                parameter_list.append(parameter)
+            elif answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                # Feature Extraction Taskの場合、shot数をパラメータとして読み込む
+                parameter = [item["shots"], item["try"]] #[shot数, 試行数]
                 parameter_list.append(parameter)
             else:
                 # 通常のパラメータ読み込み
@@ -141,7 +154,7 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
     return num_problem, filename_list, input_data_list, parameter_list, correct_list
 
 
-def evaluate(num_problem, input_data_list, parameter_list, func_recognition, answer_value_type:Task.AnswerValueType, timelimit_per_data=PROC_TIMEOUT_SEC):
+def evaluate(num_problem, input_data_list, parameter_list, func_recognition, answer_value_type:Task.AnswerValueType, timelimit_per_data=PROC_TIMEOUT_SEC, attachment_path:str=None):
     total_proc_time = 0
     try:
         # ユーザ作成の処理にかける
@@ -153,7 +166,10 @@ def evaluate(num_problem, input_data_list, parameter_list, func_recognition, ans
 
                 start_time = time.time()
 
-                if len(parameter_list[i]) == 0:
+                if answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                    # 特徴抽出タスクの場合、parameter_list[i]は[shot数, 試行数]のリスト。ユーザ処理へは添付ファイルへのパスを渡す
+                    apply_result = p.apply_async(func_recognition, (input_data_list[i], attachment_path))      
+                elif len(parameter_list[i]) == 0:
                     apply_result = p.apply_async(func_recognition, (input_data_list[i],))
                 elif len(parameter_list[i]) == 1:
                     apply_result = p.apply_async(func_recognition, (input_data_list[i], parameter_list[i][0],))
@@ -179,6 +195,8 @@ def evaluate(num_problem, input_data_list, parameter_list, func_recognition, ans
                     answer = np.array(answer, dtype=np.uint8)
                 elif answer_value_type == Task.AnswerValueType.ActiveLearing:
                     answer = np.array(answer, dtype=int)
+                elif answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                    answer = np.array(answer, dtype=float)
                 
                 end_time = time.time()
                 total_proc_time += end_time - start_time
@@ -214,7 +232,7 @@ class Result:
         self.parameter = parameter
     
 
-def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.AnswerValueType, multi_data:bool=False, data_type:Task.InputDataType=Task.InputDataType.Image3ch, contest:bool=False, timelimit_per_data=PROC_TIMEOUT_SEC):
+def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.AnswerValueType, multi_data:bool=False, data_type:Task.InputDataType=Task.InputDataType.Image3ch, contest:bool=False, timelimit_per_data=PROC_TIMEOUT_SEC, attachment_path:str=None):
     try:
         # ユーザ作成の処理を読み込む
         user_module = importlib.import_module(f"{Task.TASKS_DIR}.{task_id}.{Task.USER_MODULE_DIR_NAME}.{module_name}")
@@ -237,7 +255,7 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
         num_train, filename_list, input_data_list, parameter_list, correct_list = read_dataset(
             os.path.join(Task.TASKS_DIR, task_id, "train", FILENAME_DATASET_JSON), answer_value_type, multi_data, data_type)
 
-        answer_list, total_proc_time = evaluate(num_train, input_data_list, parameter_list, func_recognition, answer_value_type, timelimit_per_data)
+        answer_list, total_proc_time = evaluate(num_train, input_data_list, parameter_list, func_recognition, answer_value_type, timelimit_per_data, attachment_path)
         if num_train == 0:
             return []
         for i in range(num_train):
@@ -264,7 +282,7 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
         rng = np.random.default_rng(int(start))
         rng.shuffle(filename_list)
 
-        answer_list, total_proc_time = evaluate(num_valid, input_data_list, parameter_list, func_recognition, answer_value_type, timelimit_per_data)
+        answer_list, total_proc_time = evaluate(num_valid, input_data_list, parameter_list, func_recognition, answer_value_type, timelimit_per_data, attachment_path)
         if num_valid == 0:
             return []
         for i in range(num_valid):
@@ -292,7 +310,7 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
             rng = np.random.default_rng(int(start))
             rng.shuffle(filename_list)
 
-            answer_list, total_proc_time = evaluate(num_test, input_data_list, parameter_list, func_recognition, answer_value_type, timelimit_per_data)
+            answer_list, total_proc_time = evaluate(num_test, input_data_list, parameter_list, func_recognition, answer_value_type, timelimit_per_data, attachment_path)
             if num_test == 0:
                 return []
             for i in range(num_test):
@@ -376,7 +394,82 @@ def evaluateActiveLearing(num_class:int, train_data:list, label_train:list, vali
     return registration_rate, rr_detail if len(rr_detail) > 0 else None
 
 
-def ProcOneUser(task_id, user_name, new_filename, now, memo=''):
+def evaluateFeatureExtraction(features: np.ndarray, corrects: np.ndarray, num_shots: int, num_try: int) -> float:
+    """
+    特徴量の識別性能をN-shotの最近傍法で評価し、マクロ平均F1スコアを返す。
+    num_try回試行し、その平均F1スコアを算出する。
+
+    Args:
+        features (np.ndarray): 特徴量集合 (画像数 x 特徴次元数)。
+        corrects (np.ndarray): 各特徴量に対応する正解クラスラベル (画像数,)。
+        num_shots (int): 各クラスから登録データとしてランダムに選択するサンプル数。
+        num_try (int): 評価の試行回数。シードを0からnum_try-1まで変えて実行する。
+
+    Returns:
+        float: num_try回試行したF1スコアの算術平均。
+    """
+    
+    # 各試行のF1スコアを格納するリスト
+    f1_scores = []
+
+    # num_tryの回数だけ評価を繰り返す
+    for i in range(num_try):
+        # --- 変更点: ループの開始時にランダムシードを設定 ---
+        # これにより、毎回異なる組み合わせで登録データが選ばれるが、実行ごとに結果は再現可能になる
+        np.random.seed(i)
+
+        # Step 1: 登録データ(gallery)を作成する
+        # ----------------------------------------------------------------------
+        gallery_features_list = []
+        gallery_labels_list = []
+        unique_classes = np.unique(corrects)
+
+        for class_id in unique_classes:
+            class_indices = np.where(corrects == class_id)[0]
+            n_to_select = min(num_shots, len(class_indices))
+            if n_to_select == 0:
+                continue
+            
+            # np.random.seed(i) の影響を受け、この選択が試行ごとに変わる
+            gallery_indices = np.random.choice(class_indices, size=n_to_select, replace=False)
+            
+            gallery_features_list.append(features[gallery_indices])
+            gallery_labels_list.extend([class_id] * n_to_select)
+
+        # この試行で登録データが一つも作成できなかった場合は、スコアを0として次へ
+        if not gallery_features_list:
+            f1_scores.append(0.0)
+            continue
+
+        gallery_features = np.vstack(gallery_features_list)
+        gallery_labels = np.array(gallery_labels_list)
+
+        # Step 2: 識別処理 (最近傍法 + コサイン類似度)
+        # ----------------------------------------------------------------------
+        similarities = cosine_similarity(features, gallery_features)
+        nearest_indices = np.argmax(similarities, axis=1)
+        predicted_labels = gallery_labels[nearest_indices]
+
+        # Step 3: 評価 (F1スコアの算出)
+        # ----------------------------------------------------------------------
+        # この試行（シードi）でのF1スコアを計算
+        trial_f1_score = f1_score(y_true=corrects, y_pred=predicted_labels, average='macro', zero_division=0)
+        
+        # 計算したスコアをリストに追加
+        f1_scores.append(trial_f1_score)
+    
+    # --- 変更点: 全試行のF1スコアの平均を計算して返す ---
+    # 試行が一度も実行されなかった場合（num_try=0など）は0.0を返す
+    if not f1_scores:
+        return 0.0
+    
+    # リストに格納された全スコアの平均値を計算
+    average_f1 = np.mean(f1_scores)
+    
+    return average_f1
+
+
+def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo=''):
     # タスク情報の読み込み
     task:Task = Task(task_id)
     if task is None:
@@ -391,7 +484,7 @@ def ProcOneUser(task_id, user_name, new_filename, now, memo=''):
             task_id, os.path.splitext(new_filename)[0], # 拡張子を除く
             user_name, task.answer_value_type, task.multi_input_data,
             task.input_data_type, True if task.type == Task.TaskType.Contest else False,
-            task.timelimit_per_data)
+            task.timelimit_per_data, attachment_path)
         
         proc_success = True
     except Exception as e:
@@ -442,26 +535,39 @@ def ProcOneUser(task_id, user_name, new_filename, now, memo=''):
                 registration_rate[result.data_type].append(rr)
                 if detail is not None:
                     rr_detail[result.data_type].append(detail)
+        elif task.metric == Task.Metric.AverageF1Score:
+            # 特徴抽出の評価
+            average_f1_scores = {}
+            for result in result_list:
+                num_shots, num_try = result.parameter
+                average_f1_score = evaluateFeatureExtraction(result.answer, result.correct, num_shots, num_try)
+                average_f1_scores[result.data_type] = average_f1_score
+
 
         # 評価結果の詳細を出力
         output_csv_filename = user_name + "_" + now.strftime('%Y%m%d_%H%M%S') + ".csv"
         with open(os.path.join(Task.TASKS_DIR, task_id, Task.OUTPUT_DIR_NAME, "detail", output_csv_filename), "w", encoding='utf-8') as output_csv_file:
             # 集計
             output_csv_file.write(f"filename,{os.path.basename(new_filename)}\n\n")
-            output_csv_file.write("type,num_data,{0}\n".format(
-                    "true,false,accuracy" if task.metric == Task.Metric.Accuracy else ("MAE" if task.metric == Task.Metric.MAE else ("RegistrationRate" if task.metric == Task.Metric.RegistrationRate else ""))
-                ))
+            if task.metric == Task.Metric.Accuracy:
+                output_csv_file.write("type,num_data,true,false,accuracy\n")
+            elif task.metric == Task.Metric.MAE:
+                output_csv_file.write("type,num_data,MAE\n")   
+            elif task.metric == Task.Metric.RegistrationRate:
+                output_csv_file.write("type,num_data,RegistrationRate\n")
+            elif task.metric == Task.Metric.AverageF1Score:
+                output_csv_file.write("type,num_data,AverageF1Score\n")
+
             for data_type in Task.DataType:
                 if task.metric == Task.Metric.Accuracy:
-                    num_data = num_true[data_type] + num_false[data_type]
-                    output_csv_file.write(f"{data_type.name},{num_data},{num_true[data_type]},{num_false[data_type]},{num_true[data_type]/num_data if num_data > 0 else '-'}\n")
+                    output_csv_file.write(f"{data_type.name},{num_true[data_type] + num_false[data_type]},{num_true[data_type]},{num_false[data_type]},{num_true[data_type]/num_data if num_data > 0 else '-'}\n")
                 elif task.metric == Task.Metric.MAE:
                     if data_type in abs_errors:
-                        num_data = len(abs_errors[data_type])
-                        output_csv_file.write(f"{data_type.name},{num_data},{np.average(np.array(abs_errors[data_type], float))}\n")
+                        output_csv_file.write(f"{data_type.name},{len(abs_errors[data_type])},{np.average(np.array(abs_errors[data_type], float))}\n")
                 elif task.metric == Task.Metric.RegistrationRate:
-                    num_data = len(registration_rate[data_type])
-                    output_csv_file.write(f"{data_type.name},{num_data},{np.average(np.array(registration_rate[data_type], float))}\n")
+                    output_csv_file.write(f"{data_type.name},{len(registration_rate[data_type])},{np.average(np.array(registration_rate[data_type], float))}\n")
+                elif task.metric == Task.Metric.AverageF1Score:
+                    output_csv_file.write(f"{data_type.name},{len(average_f1_scores)},{average_f1_scores[data_type]}\n")
 
             # 詳細
             output_csv_file.write("\n")
@@ -532,7 +638,9 @@ def ProcOneUser(task_id, user_name, new_filename, now, memo=''):
                 elif task.metric == Task.Metric.MAE:
                     output_csv_file.write(f"{data_type.name}_MAE,")
                 elif task.metric == Task.Metric.RegistrationRate:
-                    output_csv_file.write(f"{data_type.name}RegistrationRate,")
+                    output_csv_file.write(f"{data_type.name}_RegistrationRate,")
+                elif task.metric == Task.Metric.AverageF1Score:
+                    output_csv_file.write(f"{data_type.name}_AverageF1Score,")
 
             output_csv_file.write("message,memo")
 
@@ -566,6 +674,14 @@ def ProcOneUser(task_id, user_name, new_filename, now, memo=''):
                 if proc_success:
                     if data_type in registration_rate:
                         output_csv_file.write(f"{np.average(np.array(registration_rate[data_type], float))},")
+                    else:
+                        output_csv_file.write("-,")
+                else:
+                    output_csv_file.write("-,")
+            elif task.metric == Task.Metric.AverageF1Score:
+                if proc_success:
+                    if data_type in average_f1_scores:
+                        output_csv_file.write(f"{average_f1_scores[data_type]},")
                     else:
                         output_csv_file.write("-,")
                 else:
@@ -630,8 +746,21 @@ def main():
                         with open(os.path.join(dir_user_module, new_filename), 'w', encoding='utf-8') as f:
                             f.write(content)
                         os.remove(path)
-                    except:
+                    except  Exception as e:
+                        print(f"read {path}: {e}")
                         continue
+
+                    # 添付ファイルもあれば移動
+                    if os.path.exists(path + '.attachment'):
+                        attachment_filename = new_filename + '.attachment'
+                        try:
+                            shutil.move(path + '.attachment', os.path.join(dir_user_module, attachment_filename))
+                        except Exception as e:
+                            print(f"move {path + '.attachment'}: {e}")
+                            continue
+                        attachment_path = os.path.join(dir_user_module, attachment_filename)
+                    else:
+                        attachment_path = ''
 
                     # メモもあれば読み込んで移動
                     memo = ''
@@ -669,7 +798,7 @@ def main():
 
                     # ファイルの移動に成功したらプロセス生成して処理開始
                     # proccess.submit(ProcOneUser, task_id, user_name, new_filename, now, memo)
-                    ProcOneUser(task_id, user_name, new_filename, now, memo) # デバッグのため同期実行
+                    ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo) # デバッグのため同期実行
 
             # 少し待つ
             time.sleep(1.0)

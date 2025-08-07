@@ -21,7 +21,7 @@ def answer_data_type(answer_value_type):
 
 
 def read_task(path_json):
-    json_open = open(path_json, 'r')
+    json_open = open(path_json, 'r', encoding='utf-8')
     task = json.load(json_open)
 
     return task["info"]
@@ -32,25 +32,25 @@ def read_dataset(path_json, answer_value_type=int, multi_data=False, input_data_
     dataset = json.load(json_open)
 
     filename_list = []
-    input_data_list = [] #“ü—Íƒf[ƒ^
-    correct_list = [] #³‰ğ’l
+    input_data_list = [] #å…¥åŠ›ãƒ‡ãƒ¼ã‚¿
+    correct_list = [] #æ­£è§£å€¤
     num_problem = 0
 
     for item in dataset["data"]:
         try:
-            # ³‰ğ’l
+            # æ­£è§£å€¤
             correct_list.append(answer_value_type(item["gt"]))
 
-            # “ü—Íƒf[ƒ^
+            # å…¥åŠ›ãƒ‡ãƒ¼ã‚¿
             data = []
             filename = []
             if multi_data:
                 for path in item["path"]:
-                    # ‰æ‘œ“Ç‚İ‚İ
+                    # ç”»åƒèª­ã¿è¾¼ã¿
                     filename.append(path)
                     data.append(np.array(Image.open(os.path.join(os.path.dirname(path_json), path))))
             else:
-                # ‰æ‘œ“Ç‚İ‚İ
+                # ç”»åƒèª­ã¿è¾¼ã¿
                 filename = item["path"]
                 data.append(np.array(Image.open(os.path.join(os.path.dirname(path_json), item["path"]))))
 
@@ -60,40 +60,40 @@ def read_dataset(path_json, answer_value_type=int, multi_data=False, input_data_
 
             num_problem += 1
         except:
-            print(f"“ü—Íƒf[ƒ^({num_problem})‚Ì“Ç‚İ‚İ‚É¸”s‚µ‚Ü‚µ‚½B")
+            print(f"å…¥åŠ›ãƒ‡ãƒ¼ã‚¿({num_problem})ã®èª­ã¿è¾¼ã¿ã«å¤±æ•—ã—ã¾ã—ãŸã€‚")
             continue
 
-    # ³‰ğ’lƒŠƒXƒg‚ğnumpy‚É•ÏŠ·
+    # æ­£è§£å€¤ãƒªã‚¹ãƒˆã‚’numpyã«å¤‰æ›
     correct_list = np.array(correct_list, dtype=answer_value_type)
 
     return num_problem, filename_list, input_data_list, correct_list
 
 
 def recognition(input_data) -> float:
-    # ‚±‚±‚Éˆ—‚ğ‘‚­
+    # ã“ã“ã«å‡¦ç†ã‚’æ›¸ã
     time.sleep(0.9 * input_data.shape[0])
 
-    # float‚Å„’è’l‚ğ•Ô‚·
+    # floatã§æ¨å®šå€¤ã‚’è¿”ã™
     return np.random.uniform(0, 2)
 
 
 def main():
-    # ƒ^ƒXƒNî•ñ“Ç‚İ‚İ
+    # ã‚¿ã‚¹ã‚¯æƒ…å ±èª­ã¿è¾¼ã¿
     task = read_task(os.path.join(DIR_TASK, FILENAME_TASK_JSON))
     answer_value_type = answer_data_type(task["answer_value_type"])
     if answer_value_type is None:
         return
 
-    # ƒf[ƒ^“Ç‚İ‚İ
+    # ãƒ‡ãƒ¼ã‚¿èª­ã¿è¾¼ã¿
     num_problem, filename_list, input_data_list, correct_list = read_dataset(
         os.path.join(DIR_TASK, FILEPATH_INPUT_DATA_JSON), answer_value_type, task["multi_input_data"], task["input_data_type"])
 
-    # ƒ†[ƒUì¬‚Ìˆ—‚É‚©‚¯‚é
+    # ãƒ¦ãƒ¼ã‚¶ä½œæˆã®å‡¦ç†ã«ã‹ã‘ã‚‹
     answer_list = np.zeros((num_problem), answer_value_type)
     for i in range(num_problem):
         answer_list[i] = recognition(input_data_list[i])
 
-    # •]‰¿
+    # è©•ä¾¡
     print("correct_list", correct_list)
     print("answer_list", answer_list)
 

@@ -1,4 +1,3 @@
-
 import os
 import datetime
 from enum import Enum
@@ -26,6 +25,7 @@ class Task:
         Image1ch = 3
         Image3ch = 4
         ActiveLearing = 5
+        FeatureExtraction = 6
 
     class DataType(Enum):
         train = 1
@@ -36,6 +36,7 @@ class Task:
         Accuracy = 1
         MAE = 2
         RegistrationRate = 3
+        AverageF1Score = 4
 
     class InputDataType(Enum):
         Image1ch = 1
@@ -59,6 +60,7 @@ class Task:
     metric: Metric
     input_data_type: InputDataType
     multi_input_data: bool
+    attachment: bool
     type: TaskType = TaskType.Quest
     goal = 0
     timelimit_per_data: float = 1.0
@@ -80,6 +82,7 @@ class Task:
             self.metric = self.metricType(task["metric"])
             self.input_data_type = self.inputDataType(task["input_data_type"])
             self.multi_input_data = task["multi_input_data"]
+            self.attachment = task["attachment"] if "attachment" in task else False
             if "type" in task:
                 if task["type"] == "quest":
                     self.type = Task.TaskType.Quest
@@ -129,6 +132,8 @@ class Task:
             return Task.AnswerValueType.IntegerList
         elif answer_value_type == "ActiveLearing":
             return Task.AnswerValueType.ActiveLearing
+        elif answer_value_type == "FeatureExtraction":
+            return Task.AnswerValueType.FeatureExtraction
         else:
             raise(ValueError("無効なanswer_value_type指定です。"))
 
@@ -140,6 +145,8 @@ class Task:
             return Task.Metric.MAE
         elif metric == "RegistrationRate":
             return Task.Metric.RegistrationRate
+        elif metric == "AverageF1Score":
+            return Task.Metric.AverageF1Score
         else:
             raise(ValueError("無効なmetric指定です。"))
 
@@ -162,6 +169,8 @@ class Task:
             goal_text = f'平均絶対誤差 <span style="color:#0dcaf0">{goal}</span> 以下'
         elif metric == Task.Metric.RegistrationRate:
             goal_text = f'データ登録率 <span style="color:#0dcaf0">{goal*100}%</span> 以下'
+        elif metric == Task.Metric.AverageF1Score:
+            goal_text = f'平均F値 <span style="color:#0dcaf0">{goal}</span> 以上'
         return Markup(goal_text)
 
     def afterContest(self):
@@ -232,6 +241,10 @@ class Task:
             if stats.train > self.goal or stats.valid > self.goal or (self.type == Task.TaskType.Contest and stats.test > self.goal):
                 achieve = False
 
+        elif self.metric == Task.Metric.AverageF1Score:
+            if stats.train < self.goal or stats.valid < self.goal or (self.type == Task.TaskType.Contest and stats.test < self.goal):
+                achieve = False
+
         return achieve
 
 
@@ -257,6 +270,9 @@ class Task:
                 achieve = True
         elif metric == Task.Metric.RegistrationRate:
             if evaluated_value <= goal:
+                achieve = True
+        elif metric == Task.Metric.AverageF1Score:
+            if evaluated_value >= goal:
                 achieve = True
 
         return achieve
@@ -318,7 +334,7 @@ class Stats:
             except:
                 self.memo = ''
 
-        elif metric == Task.Metric.MAE or metric == Task.Metric.RegistrationRate:
+        elif metric == Task.Metric.MAE or metric == Task.Metric.RegistrationRate or metric == Task.Metric.AverageF1Score:
             try:
                 self.train = float(raw[3])
             except:

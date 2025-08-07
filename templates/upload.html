@@ -26,17 +26,27 @@
                 <input type="hidden" name="user_key" value="{{user_key}}">
                 <div class="row">
                     <div class="col-12">
-                        <h5>アップロードする.pyファイルを 選択/ドラッグ&ドロップ してアップロードボタンをクリックしてください：</h5>
+                        <h5>アップロードするファイルを 選択/ドラッグ&ドロップ してアップロードボタンをクリックしてください：</h5>
                     </div>
                 </div>
                 <div class="row">
                     <div class="col-2 d-flex align-items-end text-right justify-content-end d-flex align-items-center">
-                        ファイル選択
+                        .pyファイル
                     </div>
                     <div class="col-10">
-                        <input type="file" name="file" class="w-100 p-3 form-control-lg"><br>
+                        <input type="file" name="file" class="w-100 p-3 form-control-lg" accept=".py"><br>
                     </div>
                 </div>
+                {% if attachment %}
+                <div class="row">
+                    <div class="col-2 d-flex align-items-end text-right justify-content-end d-flex align-items-center">
+                        添付ファイル
+                    </div>
+                    <div class="col-10">
+                        <input type="file" name="attachment" class="w-100 p-3 form-control-lg"><br>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="row">
                     <div class="col-2 d-flex align-items-end text-right justify-content-end d-flex align-items-center">
                         メモ(20文字まで)<br>自分のみ閲覧できます
@@ -63,12 +73,18 @@
             <h2>B. 提出するモジュールのルール</h2>
             <h3>ファイルについて</h3>
             <ul>
-                <li>ファイルサイズの上限は2MBです。</li>
+                <li>.pyファイルのサイズ上限は2MBです。</li>
                 <li>ファイル名は任意です。拡張子は.pyとしてください。（例えば hoge.py でもOK）</li>
                 <li>関数 recognition を含んでください。入力データを引数で受け取り、タスクごとに指定された型を返す関数です。</li>
                 <ul>
                     <li><a href="/{{task_id}}/task">タスク説明</a>でダウンロードできる基本パックに、関数 recognition を含むサンプルコードが入っています。サンプルコードに処理を追記してアップロードするのがおすすめです。</li>
                 </ul>
+                {% if attachment %}
+                <li>モデルパラメータなどのファイルを添付アップロードして、関数 recognition で使用することが可能です。</li>
+                <ul>
+                    <li>ファイルのサイズ上限は512MBです。</li>
+                </ul>
+                {% endif %}
             </ul>
             <h3>実装する処理について</h3>
             <ul>
@@ -78,6 +94,11 @@
                     <li>NumPy</li>
                     <li>OpenCV</li>
                     <li>Pillow(PIL)</li>
+                    {% if attachment %}
+                    <li>PyTorch</li>
+                    <li>torchvision</li>
+                    <li>scikit-learn</li>
+                    {% endif %}
                 </ul>
             </ul>
         </div>
