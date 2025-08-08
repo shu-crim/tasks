@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{{ service_name }} | {{ task_name }}</title>
+        <link rel="stylesheet" href="{{url_for('static', filename='css/bootstrap.min.css')}}">
+        <link rel="stylesheet" href="{{url_for('static', filename='css/shuggle.css')}}">
+    </head>
+    <body>
+        {{menu}}
+
+        <div class="container col-11">
+            <h1>{{ task_name }}</h1>
+        </div>
+
+        <br>
+        <div class="container col-11">
+            <div class="row">
+                <h2><span style="color:#00a497">G</span>oal {{goal}}</h2>
+            </div>
+        </div>
+
+        <br>
+        <div class="container col-11">
+            <ul>
+                <li>タスク説明 F</li>
+                    <ul>
+                        <li>段下げ</li>
+                        <li>段下げ</li>
+                    </ul>
+                <li>タスク説明 F</li>
+                    <ol>
+                        <li>番号付き</li>
+                        <li>番号付き</li>
+                    </ol>
+            </ul>
+        </div>
+
+        <br>
+        <div class="container col-11">
+        このTaskでは、
+        <a href="https://data.caltech.edu/records/mzrjq-6wc02" target="_blank" rel="noopener noreferrer">Caltech 101</a>
+        データセットを利用しています。
+        <br>このデータセットはカリフォルニア工科大学によって提供されており、
+        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">Creative Commons Attribution 4.0 International License</a>
+        の条件に基づき利用が許可されています。
+        </div>
+
+        <script type="text/javascript" src="{{url_for('static', filename='js/bootstrap.js')}}"></script>
+    </body>
+</html>

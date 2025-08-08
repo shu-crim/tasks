@@ -1,0 +1,18 @@
+{
+    "info": {
+        "id": "task-f",
+        "name": "Task F",
+        "explanation": "識別に有効な画像特徴量を抽出するTaskです。",
+        "start_date": "2025-08-06",
+        "end_date": "2026-03-31",
+        "answer_value_type": "FeatureExtraction",
+        "metric": "AverageF1Score",
+        "input_data_type": "image-3ch",
+        "multi_input_data": true,
+        "attachment": true,
+        "type": "contest",
+        "goal": 0.5,
+        "timelimit_per_data": 1.0,
+        "suspend": false
+    }
+}
