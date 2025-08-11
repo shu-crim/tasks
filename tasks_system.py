@@ -708,6 +708,111 @@ def GetEncodingType(file):
     return chardet.detect(rawdata)['encoding']
 
 
+def move_script_atomic(
+    source_py_path: str,
+    destination_dir: str,
+    user_name: str,
+    task_id: str,
+    now: datetime.datetime
+) -> tuple[bool, str | dict]:
+    """
+    スクリプト(.py)と関連ファイル(.txt, .attachment)をアトミックに移動します。
+
+    .pyと.txtはUTF-8に再エンコードされ、.attachmentはそのままコピーされます。
+    全ての処理が成功した場合のみ元のファイルが削除されます。
+    途中でエラーが発生した場合は、全ての変更をロールバックし、元の状態を維持します。
+
+    Args:
+        source_py_path (str): 移動元の.pyファイルのフルパス。
+        destination_dir (str): 移動先のディレクトリ。
+        user_name (str): 新しいファイル名に使用するユーザー名。
+        task_id (str): 新しいファイル名に使用するタスクID。
+
+    Returns:
+        tuple[bool, str | dict]:
+            成功した場合: (True, {'py': new_py_path, 'txt': new_txt_path, 'attachment': new_attachment_path})
+            失敗した場合: (False, エラーメッセージ)
+    """
+    # 1. 全ての関連ファイルのパスを事前に定義
+    original_py_path = source_py_path
+    original_txt_path = source_py_path + '.txt'
+    original_attachment_path = source_py_path + '.attachment'
+
+    new_base_filename = f"{user_name}_{task_id}_{now.strftime('%Y%m%d_%H%M%S')}_{os.path.basename(source_py_path)}"
+    new_py_path = os.path.join(destination_dir, new_base_filename)
+    new_txt_path = os.path.join(destination_dir, new_base_filename + '.txt')
+    new_attachment_path = os.path.join(destination_dir, new_base_filename + '.attachment')
+    
+    new_paths = {
+        'py': new_py_path,
+        'txt': new_txt_path,
+        'attachment': new_attachment_path,
+        "memo_content": ""
+    }
+
+    copied_files = []
+    source_files_to_delete = []
+
+    try:
+        # --- フェーズ1: コピー処理 ---
+        
+        # .pyファイルを文字コード変換しつつコピー
+        print(f"Copying .py file with re-encoding: {original_py_path}")
+        encoding = GetEncodingType(original_py_path)
+        with open(original_py_path, 'r', encoding=encoding) as f_in:
+            content = f_in.read()
+        with open(new_py_path, 'w', encoding='utf-8') as f_out:
+            f_out.write(content)
+        copied_files.append(new_py_path)
+        source_files_to_delete.append(original_py_path)
+
+        # .txtファイルがあれば、文字コード変換しつつコピー
+        if os.path.exists(original_txt_path):
+            print(f"Copying .txt file with re-encoding: {original_txt_path}")
+            encoding = GetEncodingType(original_txt_path)
+            with open(original_txt_path, 'r', encoding=encoding) as f_in:
+                content = f_in.read()
+                new_paths['memo_content'] = content
+            with open(new_txt_path, 'w', encoding='utf-8') as f_out:
+                f_out.write(content)
+            copied_files.append(new_txt_path)
+            source_files_to_delete.append(original_txt_path)
+        else:
+            new_paths['txt'] = '' # 存在しない場合はパスを空にする
+
+        # 添付ファイルがあれば、そのままコピー
+        if os.path.exists(original_attachment_path):
+            print(f"Copying attachment file: {original_attachment_path}")
+            shutil.copy2(original_attachment_path, new_attachment_path)
+            copied_files.append(new_attachment_path)
+            source_files_to_delete.append(original_attachment_path)
+        else:
+            new_paths['attachment'] = '' # 存在しない場合はパスを空にする
+
+        # --- フェーズ2: 元ファイルの削除処理 ---
+        print("All copies successful. Deleting original files...")
+        for file_path in source_files_to_delete:
+            os.remove(file_path)
+        print("Process completed successfully.")
+        
+        return True, new_paths
+
+    except Exception as e:
+        print(f"An error occurred during the process: {e}")
+        print("Rolling back changes...")
+        
+        # --- ロールバック処理 ---
+        for file_path in copied_files:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"Rolled back (removed): {file_path}")
+            except Exception as rollback_e:
+                print(f"FATAL: Failed to remove temporary file during rollback: {file_path}. Error: {rollback_e}")
+        
+        return False, str(e)
+
+
 def main():
     with ProcessPoolExecutor(max_workers=4) as proccess:
         while True:
@@ -736,46 +841,26 @@ def main():
                     if not os.path.exists(dir_user_module):
                         os.makedirs(dir_user_module)
 
-                    # ファイルを読み込んで移動先に保存、元ファイルの削除を試みる
+                    # ユーザのモジュールディレクトリに移動する
                     now = datetime.datetime.now()
-                    new_filename = user_name + "_" + task_id + "_" + now.strftime('%Y%m%d_%H%M%S_') + os.path.basename(path)
-                    try:
-                        encoding = GetEncodingType(path)
-                        with open(path, 'r', encoding=encoding) as f:
-                            content = f.read()
-                        with open(os.path.join(dir_user_module, new_filename), 'w', encoding='utf-8') as f:
-                            f.write(content)
-                        os.remove(path)
-                    except  Exception as e:
-                        print(f"read {path}: {e}")
+                    success, result = move_script_atomic(
+                        source_py_path=path,
+                        destination_dir=dir_user_module,
+                        user_name=user_name,
+                        task_id=task_id,
+                        now=now,
+                    )
+
+                    if not success:
+                        print(f"ファイルの移動に失敗：{user_name} in task {task_id}: {result}")
                         continue
 
-                    # 添付ファイルもあれば移動
-                    if os.path.exists(path + '.attachment'):
-                        attachment_filename = new_filename + '.attachment'
-                        try:
-                            shutil.move(path + '.attachment', os.path.join(dir_user_module, attachment_filename))
-                        except Exception as e:
-                            print(f"move {path + '.attachment'}: {e}")
-                            continue
-                        attachment_path = os.path.join(dir_user_module, attachment_filename)
-                    else:
-                        attachment_path = ''
-
-                    # メモもあれば読み込んで移動
-                    memo = ''
-                    if os.path.exists(path + '.txt'):
-                        try:
-                            with open(path + '.txt', encoding='utf-8') as f:
-                                memo = f.read()
-
-                            shutil.move(path + '.txt', os.path.join(Task.TASKS_DIR, task_id, Task.USER_MODULE_DIR_NAME, new_filename + '.txt'))
-                        except Exception as e:
-                            print(f"read {path + '.txt'}: {e}")
-                    
                     # 移動に成功したら評価
                     print(f"pcoccess start: {user_name}")
-                    print(f"{path} -> {new_filename}")
+                    print(f"{path} -> {result['py']}")
+                    new_filename = os.path.basename(result['py'])
+                    attachment_path = result['attachment'] if 'attachment' in result else ''
+                    memo = result['memo_content'] if 'memo_content' in result else ''
 
                     # 出力先ディレクトリが存在しない場合は生成(新規Taskの実行時)
                     dir_output_user = os.path.join(Task.TASKS_DIR, task_id, Task.OUTPUT_DIR_NAME, "user")

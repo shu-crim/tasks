@@ -5,6 +5,7 @@ from werkzeug.utils import secure_filename
 import json
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
+import math
 
 import os
 import glob
@@ -43,6 +44,7 @@ class Page(Enum):
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024 #ファイルサイズ制限 256MB
 app.config['SECRET_KEY'] = 'secret key here'
+app.config['TEMPLATES_AUTO_RELOAD'] = True # テンプレートの自動リロードを有効にする設定
 
 
 def menuHTML(page, task_id="", url_from="", admin=False, user_name=""):
@@ -1035,8 +1037,26 @@ def upload_file(task_id):
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
     msg = ""
+    # 提出可否チェック
+    upload_enabled = True
+    stats = User.getUserStats(task_id)
+    if user_data.id in stats:
+        sorted_submits = sorted(stats[user_data.id], key=lambda x: x.datetime, reverse=True) # 提出日時でソート
+        if sorted_submits[0].datetime + datetime.timedelta(minutes=task.submit_interval_minutes) > datetime.datetime.now():
+            last_minutes = (sorted_submits[0].datetime + datetime.timedelta(minutes=task.submit_interval_minutes) - datetime.datetime.now()).total_seconds() / 60
+            msg = f"提出可能になるのは、前回の提出から一定期間後となります。(あと{math.ceil(last_minutes)}分ほどお待ちください)"
+            upload_enabled = False
 
-    if request.method == 'POST':
+    if os.path.exists(os.path.join(Task.TASKS_DIR, task_id, Task.OUTPUT_DIR_NAME, "user", f"{user_data.id}_inproc")):
+        msg = f"現在、評価を実行中です。提出可能になるのは、前回の提出から一定期間後となります。"
+        upload_enabled = False
+
+    py_files = glob.glob(os.path.join(Task.TASKS_DIR, task_id, Task.UPLOAD_DIR_NAME, user_data.id, '*.py'))
+    if len(py_files) > 0:
+        msg = f"現在、評価待ち中です。提出可能になるのは、前回の提出から一定期間後となります。"
+        upload_enabled = False
+
+    if request.method == 'POST' and upload_enabled:
         file = request.files['file']
         if not file:
             msg = "ファイルが選択されていません。"
@@ -1058,33 +1078,32 @@ def upload_file(task_id):
 
                 try:
                     save_dir = os.path.join(Task.TASKS_DIR, task_id, Task.UPLOAD_DIR_NAME, user_id)
+                    new_filename = secure_filename(file.filename)
 
                     # まだディレクトリが存在しなければ作成(Taskのディレクトリがなければそれも生成)
                     if not os.path.exists(save_dir):
                         os.makedirs(save_dir)
 
                     if os.path.exists(save_dir):
-                        new_filename = secure_filename(file.filename)
-                        file.save(os.path.join(save_dir, new_filename))
-                        msg = f'{file.filename} がアップロードされました。'
-
+                        # 添付ファイルがある場合は保存
                         if attachment is not None:
-                            # 添付ファイルがある場合は保存
                             attachment_filename = secure_filename(attachment.filename)
                             attachment.save(os.path.join(save_dir, new_filename + '.attachment'))
-                            msg += f' 添付ファイル {attachment_filename} もアップロードされました。'
+                            msg += f' 添付ファイル {attachment_filename} がアップロードされました。'
 
                         # メモを保存
                         if request.form['memo'] != "":
                             with open(os.path.join(save_dir, new_filename + '.txt'), mode='w', encoding='utf-8') as f:
                                 f.write(request.form['memo'])
+
+                        # .pyファイルを保存(これは最後に行う。評価システム側ではこのファイルが存在する場合にアップロード完了と判断するため)
+                        file.save(os.path.join(save_dir, new_filename))
+                        msg = f'{file.filename} がアップロードされました。'
                     else:
                         raise(ValueError("アップロード先のディレクトリが存在しません。"))
-                except:
+                except Exception as e:
                     msg = "アップロードに失敗しました。"
-
-    # ユーザ認証
-    # verified, user_data, admin = VerifyByCookie(request)
+                    print(e)
 
     return render_template('upload.html',
                            task_id=task_id, task_name=task.name, message=msg,
@@ -1092,7 +1111,8 @@ def upload_file(task_id):
                            menu=menuHTML(Page.UPLOAD, task_id, url_from=f"/{task_id}/upload", admin=admin, user_name=user_data.name if verified else ''),
                            service_name=SETTING["name"]["service"],
                            url_from=f"/{task_id}/upload", time_limit=task.timelimit_per_data,
-                           attachment=task.attachment)
+                           attachment=task.attachment,
+                           upload_enabled=upload_enabled)
   
 
 @app.route('/<task_id>/admin')

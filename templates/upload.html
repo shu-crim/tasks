@@ -20,6 +20,7 @@
             <h2>A. 提出</h2>
         </div>
 
+        {% if upload_enabled %}
         <div class="container col-11">
             <form action="" method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="user_id" value="{{user_id}}">
@@ -60,6 +61,7 @@
                 </div>
             </form>
         </div>
+        {% endif %}
         
         <br>
 

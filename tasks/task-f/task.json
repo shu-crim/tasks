@@ -10,6 +10,7 @@
         "input_data_type": "image-3ch",
         "multi_input_data": true,
         "attachment": true,
+        "submit_interval_minutes": 5,
         "type": "contest",
         "goal": 0.5,
         "timelimit_per_data": 1.0,

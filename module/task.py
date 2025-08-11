@@ -83,6 +83,7 @@ class Task:
             self.input_data_type = self.inputDataType(task["input_data_type"])
             self.multi_input_data = task["multi_input_data"]
             self.attachment = task["attachment"] if "attachment" in task else False
+            self.submit_interval_minutes = task["submit_interval_minutes"] if "submit_interval_minutes" in task else 0
             if "type" in task:
                 if task["type"] == "quest":
                     self.type = Task.TaskType.Quest
