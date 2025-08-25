@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{{ service_name }} | {{filename}}</title>
+        <link href="{{url_for('static', filename='css/bootstrap.min.css')}}" rel="stylesheet">
+        <link href="{{url_for('static', filename='css/shuggle.css')}}" rel="stylesheet">
+    </head>
+    <body>
+        <div class="container col-11">
+            <h1><a class="navbar-brand" href="/">IR <span style="color:#00a497">T</span>asks</a></h1>
+        </div>
+
+        <br>
+
+        <div class="container col-11">
+            <h2>{{user_name}} さんの詳細な評価結果</h2>
+        </div>
+
+        <div class="container col-11">
+            <h3>{{data_type}}: 平均F値 {{ "%.4f" | format(stats) }}</h3>
+
+            {% for task_index, result_detail in detail.items() %}
+            <br>
+            <h4>Sub Task {{task_index + 1}}: 平均F値 {{ "%.4f" | format(each_stats[task_index]) }}</h4>
+            <table class="table table-bordered table-striped table-dark">
+                <thead>
+                    <tr>
+                        <th scope="col">カテゴリ</th>
+                        <th scope="col">GT</th>
+                        <th scope="col">TP</th>
+                        <th scope="col">FN</th>
+                        <th scope="col">FP</th>
+                        <th scope="col">Precision</th>
+                        <th scope="col">Recall</th>
+                        <th scope="col">F1-Score</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for class_id, metrics in result_detail.items() %}
+                    <tr>
+                        <td>{{ metrics.class_name }}</td>
+                        <td>{{ metrics.gt }}</td>
+                        <td>{{ metrics.tp }}</td>
+                        <td>{{ metrics.fn }}</td>
+                        <td>{{ metrics.fp }}</td>
+                        <td>{{ "%.4f" | format(metrics.precision) }}</td>
+                        <td>{{ "%.4f" | format(metrics.recall) }}</td>
+                        <td>{{ "%.4f" | format(metrics.f1_score) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endfor %}
+        </div>
+    
+        <script type="text/javascript" src="{{url_for('static', filename='js/bootstrap.js')}}"></script>
+    </body>
+</html>

@@ -296,8 +296,8 @@ def CreateRecordTableRow(submit:Submit, visible_invalid_data:bool=False, user_na
                     return ""
                 
             else:
-                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.train, submit.task.goal)}>{submit.stats.train:.3f}(F1)</td>'
-                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.valid, submit.task.goal)}>{submit.stats.valid:.3f}(F1)</td>'
+                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.train, submit.task.goal)}>{submit.stats.train:.3f}(F1) <a href="/detail/{submit.task.id}/{submit.stats.userid}/{submit.stats.datetime.strftime("%Y%m%d_%H%M%S")}/train" class="link-info">●</a></td>'
+                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.valid, submit.task.goal)}>{submit.stats.valid:.3f}(F1) <a href="/detail/{submit.task.id}/{submit.stats.userid}/{submit.stats.datetime.strftime("%Y%m%d_%H%M%S")}/valid" class="link-info">●</a></td>'
                 
                 # Test:選択
                 if test:
@@ -308,7 +308,7 @@ def CreateRecordTableRow(submit:Submit, visible_invalid_data:bool=False, user_na
                         if submit.task.achieve(submit.stats):
                             # Questであればいつでも、Contestであれば期間終了後にロック解除
                             if submit.task.afterContest(): 
-                                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.test, submit.task.goal)}>{submit.stats.test:.3f}(F1)</td>'
+                                html_temp += f'<td{EvaluatedValueStyle(submit.task.metric, submit.stats.test, submit.task.goal)}>{submit.stats.test:.3f}(F1) <a href="/detail/{submit.task.id}/{submit.stats.userid}/{submit.stats.datetime.strftime("%Y%m%d_%H%M%S")}/test" class="link-info">●</a></td>'
                                 unlock = True
                         if not unlock:
                             html_temp += f'<td>?</td>'
@@ -1048,12 +1048,12 @@ def upload_file(task_id):
             upload_enabled = False
 
     if os.path.exists(os.path.join(Task.TASKS_DIR, task_id, Task.OUTPUT_DIR_NAME, "user", f"{user_data.id}_inproc")):
-        msg = f"現在、評価を実行中です。提出可能になるのは、前回の提出から一定期間後となります。"
+        msg = f"現在、評価を実行中です。提出可能になるのは、評価完了かつ提出から一定期間後となります。"
         upload_enabled = False
 
     py_files = glob.glob(os.path.join(Task.TASKS_DIR, task_id, Task.UPLOAD_DIR_NAME, user_data.id, '*.py'))
     if len(py_files) > 0:
-        msg = f"現在、評価待ち中です。提出可能になるのは、前回の提出から一定期間後となります。"
+        msg = f"現在、評価待ち中です。提出可能になるのは、評価完了かつ提出から一定期間後となります。"
         upload_enabled = False
 
     if request.method == 'POST' and upload_enabled:
@@ -1210,7 +1210,7 @@ def detail(task_id, user_id, dt, data_type):
     # タスク情報を読み込む
     task:Task = Task(task_id)
 
-    if task.metric != Task.Metric.RegistrationRate:
+    if task.metric != Task.Metric.RegistrationRate and task.metric != Task.Metric.AverageF1Score:
         return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='詳細を表示できるTaskではありません')
     
     if data_type != "train" and data_type != "valid" and data_type != "test":
@@ -1224,108 +1224,188 @@ def detail(task_id, user_id, dt, data_type):
     if not os.path.exists(file_path):
         return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='詳細を表示するファイルが見つかりません')
 
-    class_name = {}
-    try:
-        dataset_path = os.path.join(Task.TASKS_DIR, task_id, data_type, FILENAME_DATASET_JSON)
-        with open(dataset_path, 'r', encoding='utf-8') as f:
-            dataset = json.load(f)
-        for key, value in dataset["settings"]["class_name"].items():
-            class_name[int(key)] = value
-    except Exception as e:
-        print(e)
+    # アクティブラーニングTaskの詳細表示
+    if task.metric == Task.Metric.RegistrationRate:
+        class_name = {}
+        try:
+            dataset_path = os.path.join(Task.TASKS_DIR, task_id, data_type, FILENAME_DATASET_JSON)
+            with open(dataset_path, 'r', encoding='utf-8') as f:
+                dataset = json.load(f)
+            for key, value in dataset["settings"]["class_name"].items():
+                class_name[int(key)] = value
+        except Exception as e:
+            print(e)
 
-    # detal csvの読み込み
-    try:        
-        with open(file_path, 'r', encoding='utf-8') as csvfile:
-            reader = csv.reader(csvfile)
-            all_rows = list(reader)
-            detail = {}
-            iRow = 0
-            stats = {}
-            while iRow < len(all_rows):
-                # 最初のtrain/valid/testがTaskの成績
-                if not "train" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "train":
-                    stats["train"] = float(all_rows[iRow][2])
-                if not "valid" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "valid":
-                    stats["valid"] = float(all_rows[iRow][2])
-                if not "test" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "test":
-                    stats["test"] = float(all_rows[iRow][2])
+        # detal csvの読み込み
+        try:        
+            with open(file_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                all_rows = list(reader)
+                detail = {}
+                iRow = 0
+                stats = {}
+                while iRow < len(all_rows):
+                    # 最初のtrain/valid/testがTaskの成績
+                    if not "train" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "train":
+                        stats["train"] = float(all_rows[iRow][2])
+                    if not "valid" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "valid":
+                        stats["valid"] = float(all_rows[iRow][2])
+                    if not "test" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "test":
+                        stats["test"] = float(all_rows[iRow][2])
 
-                # detail記述の始まり
-                if len(all_rows[iRow]) >= 2 and all_rows[iRow][0] == "detail":
-                    kind = all_rows[iRow][1]
-                    detail[kind] = {"precision":[], "recall":[]} #P/RのList
-                    iRow += 1 #ヘッダ行を飛ばす
-                    for iRR in range(101): #0..100%
+                    # detail記述の始まり
+                    if len(all_rows[iRow]) >= 2 and all_rows[iRow][0] == "detail":
+                        kind = all_rows[iRow][1]
+                        detail[kind] = {"precision":[], "recall":[]} #P/RのList
+                        iRow += 1 #ヘッダ行を飛ばす
+                        for iRR in range(101): #0..100%
+                            iRow += 1
+                            while all_rows[iRow] and all_rows[iRow][-1] == '':
+                                all_rows[iRow].pop() #末尾の空白要素を削除
+                            detail[kind]["precision"].append(list(map(float, all_rows[iRow][1:])))
+                        iRow += 1 #ヘッダ行を飛ばす
+                        for iRR in range(101): #0..100%
+                            iRow += 1
+                            while all_rows[iRow] and all_rows[iRow][-1] == '':
+                                all_rows[iRow].pop() #末尾の空白要素を削除
+                            detail[kind]["recall"].append(list(map(float, all_rows[iRow][1:])))
+
+                    iRow += 1
+        except Exception as e:
+            print(f"{e}")
+            return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='ファイルを読み込めません')
+        
+        # データが存在しなければ非表示
+        if not data_type in detail:
+            return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='詳細データが存在しません')
+
+        # ゴール達成していなければ非表示
+        if data_type == "test":
+            if stats["train"] > task.goal or stats["valid"] > task.goal or stats["test"] > task.goal:
+                return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='Goalを達成した場合のみ表示可能です')
+        
+        # グラフ表示データ
+        def dataDict(data, precision=True):
+            cmap = plt.get_cmap('tab20')
+            data_dict = {
+                "labels": [], "datasets": []
+            }
+            for iRR in range(data.shape[0]):
+                data_dict["labels"].append(f"{iRR}")
+            for iClass in range(data.shape[1]):
+                class_dict = {"label":class_name[iClass] if iClass in class_name else f"class{iClass}", "data":[], "borderColor":matplotlib.colors.rgb2hex(cmap(iClass))}
+                for iData in range(data.shape[0]):
+                    class_dict["data"].append(data[iData][iClass])
+                data_dict["datasets"].append(class_dict)
+            return data_dict
+        
+        def optionsDict(precision=True):
+            config_dict = {"scales":{"x":{},"y":{}}, "elements":{"point":{"radius":0}}}
+            config_dict["scales"]["x"]["beginAtZero"] = True
+            config_dict["scales"]["x"]["title"] = {
+                "display": True,
+                "text": "データ登録率 [%]"
+            }
+            config_dict["scales"]["y"]["beginAtZero"] = True
+            config_dict["scales"]["y"]["title"] = {
+                "display": True,
+                "text": "Precision" if precision else "Recall"
+            }
+            config_dict["scales"]["y"]["grid"] = {
+                "color": "#555"
+            }
+            return config_dict
+
+        precision_data = dataDict(np.array(detail[data_type]["precision"]), precision=True)
+        recall_data = dataDict(np.array(detail[data_type]["recall"]), precision=False)
+
+        return render_template(f'detail_active-learning.html',
+                            service_name=SETTING["name"]["service"],
+                            user_name=User.userIDtoUserName(user_id),
+                            data_type=data_type,
+                            stats=f"{stats[data_type]*100:.01f}",
+                            train_precision=precision_data,
+                            train_recall=recall_data,
+                            options_precision=optionsDict(True),
+                            options_recall=optionsDict(False))
+    
+    # 特徴抽出タスクの詳細表示
+    elif task.metric == Task.Metric.AverageF1Score:
+        # detal csvの読み込み
+        try:        
+            with open(file_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                all_rows = list(reader)
+                detail = {}
+                iRow = 0
+                stats = {}
+                each_stats = {}
+                while iRow < len(all_rows):
+                    # 最初のtrain/valid/testがTaskの成績
+                    if not "train" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "train":
+                        stats["train"] = float(all_rows[iRow][2])
                         iRow += 1
-                        while all_rows[iRow] and all_rows[iRow][-1] == '':
-                            all_rows[iRow].pop() #末尾の空白要素を削除
-                        detail[kind]["precision"].append(list(map(float, all_rows[iRow][1:])))
-                    iRow += 1 #ヘッダ行を飛ばす
-                    for iRR in range(101): #0..100%
+                    if not "valid" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "valid":
+                        stats["valid"] = float(all_rows[iRow][2])
                         iRow += 1
-                        while all_rows[iRow] and all_rows[iRow][-1] == '':
-                            all_rows[iRow].pop() #末尾の空白要素を削除
-                        detail[kind]["recall"].append(list(map(float, all_rows[iRow][1:])))
+                    if not "test" in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == "test":
+                        stats["test"] = float(all_rows[iRow][2])
+                        iRow += 1
 
-                iRow += 1
-    except Exception as e:
-        print(f"{e}")
-        return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='ファイルを読み込めません')
-    
-    # データが存在しなければ非表示
-    if not data_type in detail:
-        return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='詳細データが存在しません')
+                    # 2つ目以降の各行が各データタイプの詳細
+                    if data_type in stats and len(all_rows[iRow]) >= 3 and all_rows[iRow][0] == data_type:
+                        each_stats[int(all_rows[iRow][1])] = float(all_rows[iRow][2])
 
-    # ゴール達成していなければ非表示
-    if data_type == "test":
-        if stats["train"] > task.goal or stats["valid"] > task.goal or stats["test"] > task.goal:
-            return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='Goalを達成した場合のみ表示可能です')
-    
-    # グラフ表示データ
-    def dataDict(data, precision=True):
-        cmap = plt.get_cmap('tab20')
-        data_dict = {
-            "labels": [], "datasets": []
-        }
-        for iRR in range(data.shape[0]):
-            data_dict["labels"].append(f"{iRR}")
-        for iClass in range(data.shape[1]):
-            class_dict = {"label":class_name[iClass] if iClass in class_name else f"class{iClass}", "data":[], "borderColor":matplotlib.colors.rgb2hex(cmap(iClass))}
-            for iData in range(data.shape[0]):
-                class_dict["data"].append(data[iData][iClass])
-            data_dict["datasets"].append(class_dict)
-        return data_dict
-    
-    def optionsDict(precision=True):
-        config_dict = {"scales":{"x":{},"y":{}}, "elements":{"point":{"radius":0}}}
-        config_dict["scales"]["x"]["beginAtZero"] = True
-        config_dict["scales"]["x"]["title"] = {
-            "display": True,
-            "text": "データ登録率 [%]"
-        }
-        config_dict["scales"]["y"]["beginAtZero"] = True
-        config_dict["scales"]["y"]["title"] = {
-            "display": True,
-            "text": "Precision" if precision else "Recall"
-        }
-        config_dict["scales"]["y"]["grid"] = {
-            "color": "#555"
-        }
-        return config_dict
+                    # detail記述の始まり
+                    if len(all_rows[iRow]) >= 2 and all_rows[iRow][0] == "detail":
+                        kind = all_rows[iRow][1]
+                        task_index = int(all_rows[iRow][2])
+                        if not kind in detail:
+                            detail[kind] = {}
+                        detail[kind][task_index] = {}
+                        iRow += 2 #ヘッダ行を飛ばす
+                        while len(all_rows[iRow]) >= 8:
+                            row = all_rows[iRow]
+                            class_index = int(row[0])
+                            gt = int(row[1])
+                            tp = float(row[2])
+                            fn = float(row[3])
+                            fp = float(row[4])
+                            precision = float(row[5])
+                            recall = float(row[6])
+                            f1_score = float(row[7])
+                            detail[kind][task_index][class_index] = {
+                                "class_name": class_index,
+                                "gt": gt,
+                                "tp": tp,
+                                "fn": fn,
+                                "fp": fp,
+                                "precision": precision,
+                                "recall": recall,
+                                "f1_score": f1_score,
+                            }
+                            iRow += 1
+                    iRow += 1
+        except Exception as e:
+            print(f"{e}")
+            return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='ファイルを読み込めません')
+        
+        # データが存在しなければ非表示
+        if not data_type in detail:
+            return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='詳細データが存在しません')
 
-    precision_data = dataDict(np.array(detail[data_type]["precision"]), precision=True)
-    recall_data = dataDict(np.array(detail[data_type]["recall"]), precision=False)
-
-    return render_template(f'detail_active-learning.html',
-                           service_name=SETTING["name"]["service"],
-                           user_name=User.userIDtoUserName(user_id),
-                           data_type=data_type,
-                           stats=f"{stats[data_type]*100:.01f}",
-                           train_precision=precision_data,
-                           train_recall=recall_data,
-                           options_precision=optionsDict(True),
-                           options_recall=optionsDict(False))
+        # ゴール達成していなければ非表示
+        if data_type == "test":
+            if stats["train"] > task.goal or stats["valid"] > task.goal or stats["test"] > task.goal:
+                return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='Goalを達成した場合のみ表示可能です')
+            
+        return render_template(f'detail_feature-extraction.html',
+                            service_name=SETTING["name"]["service"],
+                            user_name=User.userIDtoUserName(user_id),
+                            data_type=data_type,
+                            stats=stats[data_type],
+                            each_stats=each_stats,
+                            detail=detail[data_type])
 
 
 if __name__ == "__main__":
@@ -1340,4 +1420,4 @@ if __name__ == "__main__":
     TASK = Task.readTasks()
 
     # アプリ開始
-    app.run(debug=False, host='0.0.0.0', port=80)
+    app.run(debug=True, host='0.0.0.0', port=80)

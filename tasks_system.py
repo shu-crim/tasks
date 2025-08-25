@@ -1,4 +1,5 @@
 import os
+import gc
 import numpy as np
 import importlib
 from PIL import Image
@@ -17,7 +18,8 @@ import random
 import cv2
 import sklearn.metrics
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, precision_recall_fscore_support, confusion_matrix  
+from collections import defaultdict
 from module.task import Task, Log
 from module.image import ImageProc
 
@@ -95,8 +97,10 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
                             image = image.convert("L")
                         image = np.array(image)
                         if answer_value_type == Task.AnswerValueType.FeatureExtraction:
-                            # 特徴抽出の場合は画像を切り抜いてサイズを合わせる
-                            image = ImageProc.center_crop(image)  # 画像を中心で切り抜き
+                            if input_data_type == Task.InputDataType.Image3ch:
+                                # 入力画像が2次元（グレースケール）の場合、3次元に拡張する(H, W) -> (H, W, 3)
+                                if image.ndim == 2:
+                                    image = np.stack([image] * 3, axis=-1)
                         data.append(image)
                 else:
                     # 画像読み込み
@@ -108,7 +112,10 @@ def read_dataset(path_json, answer_value_type=int, multi_data:bool=False, input_
 
             # 複数データの場合にひとまとめの行列にする
             if multi_data:
-                input_data_list.append(np.array(data, dtype=data[0].dtype))
+                if answer_value_type == Task.AnswerValueType.FeatureExtraction: # Feature Extraction Taskの場合はそのまま
+                    input_data_list.append(data)
+                else:
+                    input_data_list.append(np.array(data, dtype=data[0].dtype))
             else:
                 input_data_list.append(data)
 
@@ -161,7 +168,10 @@ def evaluate(num_problem, input_data_list, parameter_list, func_recognition, ans
         answer_list = []
         with Pool(processes=1) as p:
             for i in range(num_problem):
-                num_input_data = input_data_list[i].shape[0]
+                if answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                    num_input_data = len(input_data_list[i]) # 特徴抽出タスクの場合、input_data_list[i]は画像のリスト
+                else:
+                    num_input_data = input_data_list[i].shape[0]
                 time_limit = timelimit_per_data * (num_input_data + 20) if i == 0 else timelimit_per_data * num_input_data # 初回のみオーバーヘッドを考慮してゆるめ
 
                 start_time = time.time()
@@ -250,7 +260,7 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
     
     start = time.time()
 
-    try:    
+    try:
         # train
         num_train, filename_list, input_data_list, parameter_list, correct_list = read_dataset(
             os.path.join(Task.TASKS_DIR, task_id, "train", FILENAME_DATASET_JSON), answer_value_type, multi_data, data_type)
@@ -267,6 +277,11 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
             result = Result(Task.DataType.train, filename_list[i], correct_list[i], answer_list[i], input_data_list[i], parameter_list[i])
             result_list.append(result)
         print(f'Train({user_name}) average proc time: {total_proc_time / num_train : .1f}s, total: {total_proc_time : .1f} s')
+
+        # メモリ解放
+        if answer_value_type == Task.AnswerValueType.FeatureExtraction:
+            del input_data_list
+            gc.collect()
 
         # valid
         num_valid, filename_list, input_data_list, parameter_list, correct_list = read_dataset(
@@ -295,6 +310,11 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
             result_list.append(result)
         print(f'Valid({user_name}) average proc time: {total_proc_time / num_valid : .1f}s, total: {total_proc_time : .1f} s')
 
+        # メモリ解放
+        if answer_value_type == Task.AnswerValueType.FeatureExtraction:
+            del input_data_list
+            gc.collect()
+
         # test
         if contest:
             num_test, filename_list, input_data_list, parameter_list, correct_list = read_dataset(
@@ -322,6 +342,11 @@ def evaluate3data(task_id, module_name, user_name, answer_value_type:Task.Answer
                 result = Result(Task.DataType.test, filename_list[i], correct_list[i], answer_list[i], input_data_list[i], parameter_list[i])
                 result_list.append(result)
             print(f'Test({user_name}) average proc time: {total_proc_time / num_test : .1f}s, total: {total_proc_time : .1f} s')
+
+            # メモリ解放   
+            if answer_value_type == Task.AnswerValueType.FeatureExtraction:
+                del input_data_list
+                gc.collect()
 
     except Exception as e:
         raise(e)
@@ -394,10 +419,10 @@ def evaluateActiveLearing(num_class:int, train_data:list, label_train:list, vali
     return registration_rate, rr_detail if len(rr_detail) > 0 else None
 
 
-def evaluateFeatureExtraction(features: np.ndarray, corrects: np.ndarray, num_shots: int, num_try: int) -> float:
+def evaluateFeatureExtraction(features: np.ndarray, corrects: np.ndarray, num_shots: int, num_try: int) -> tuple[float, dict]:
     """
-    特徴量の識別性能をN-shotの最近傍法で評価し、マクロ平均F1スコアを返す。
-    num_try回試行し、その平均F1スコアを算出する。
+    特徴量の識別性能をN-shotの最近傍法で評価し、マクロ平均F1スコアと詳細な評価結果を返す。
+    num_try回試行し、その平均スコアを算出する。
 
     Args:
         features (np.ndarray): 特徴量集合 (画像数 x 特徴次元数)。
@@ -406,26 +431,37 @@ def evaluateFeatureExtraction(features: np.ndarray, corrects: np.ndarray, num_sh
         num_try (int): 評価の試行回数。シードを0からnum_try-1まで変えて実行する。
 
     Returns:
-        float: num_try回試行したF1スコアの算術平均。
+        tuple[float, dict]:
+            - float: num_try回試行したマクロ平均F1スコアの算術平均。
+            - dict: 各クラスのprecision, recall, f1-score, gt, tp, fn, fpの平均値を格納した辞書。
+                    キーはクラスラベル、値は評価指標の辞書。
+                    例: {
+                        0: {'precision': 0.8, 'recall': 0.9, 'f1': 0.85, 'gt': 50, 'tp': 45, 'fn': 5, 'fp': 11},
+                        ...
+                    }
     """
     
-    # 各試行のF1スコアを格納するリスト
+    # 各試行のマクロF1スコアを格納するリスト
     f1_scores = []
+    # 各クラスの詳細な評価指標の合計値を格納する辞書 (gt, tp, fn, fp を追加)
+    detail_sum = defaultdict(lambda: {
+        'precision': 0.0, 'recall': 0.0, 'f1': 0.0,
+        'gt': 0.0, 'tp': 0.0, 'fn': 0.0, 'fp': 0.0
+    })
+    unique_classes = np.unique(corrects)
 
     # num_tryの回数だけ評価を繰り返す
     for i in range(num_try):
-        # --- 変更点: ループの開始時にランダムシードを設定 ---
-        # これにより、毎回異なる組み合わせで登録データが選ばれるが、実行ごとに結果は再現可能になる
         np.random.seed(i)
 
         # Step 1: 登録データ(gallery)を作成する
         # ----------------------------------------------------------------------
         gallery_features_list = []
         gallery_labels_list = []
-        unique_classes = np.unique(corrects)
 
         for class_id in unique_classes:
             class_indices = np.where(corrects == class_id)[0]
+            # クラスのサンプル数がnum_shotsより少ない場合も考慮
             n_to_select = min(num_shots, len(class_indices))
             if n_to_select == 0:
                 continue
@@ -439,6 +475,7 @@ def evaluateFeatureExtraction(features: np.ndarray, corrects: np.ndarray, num_sh
         # この試行で登録データが一つも作成できなかった場合は、スコアを0として次へ
         if not gallery_features_list:
             f1_scores.append(0.0)
+            # 詳細スコアは何も加算しない
             continue
 
         gallery_features = np.vstack(gallery_features_list)
@@ -450,23 +487,73 @@ def evaluateFeatureExtraction(features: np.ndarray, corrects: np.ndarray, num_sh
         nearest_indices = np.argmax(similarities, axis=1)
         predicted_labels = gallery_labels[nearest_indices]
 
-        # Step 3: 評価 (F1スコアの算出)
+        # Step 3: 評価
         # ----------------------------------------------------------------------
-        # この試行（シードi）でのF1スコアを計算
+        # 3-1. マクロ平均F1スコアの算出
         trial_f1_score = f1_score(y_true=corrects, y_pred=predicted_labels, average='macro', zero_division=0)
-        
-        # 計算したスコアをリストに追加
         f1_scores.append(trial_f1_score)
+        
+        # 3-2. 各クラスの詳細な評価指標の算出と加算
+        # support(s)も受け取るように変更
+        p, r, f, s = precision_recall_fscore_support(
+            y_true=corrects, 
+            y_pred=predicted_labels, 
+            labels=unique_classes, 
+            average=None, # クラスごとに算出
+            zero_division=0
+        )
+        
+        # 混同行列を計算
+        cm = confusion_matrix(
+            y_true=corrects,
+            y_pred=predicted_labels,
+            labels=unique_classes
+        )
+        
+        for idx, class_id in enumerate(unique_classes):
+            detail_sum[class_id]['precision'] += p[idx]
+            detail_sum[class_id]['recall'] += r[idx]
+            detail_sum[class_id]['f1'] += f[idx]
+            detail_sum[class_id]['gt'] += s[idx]  # support が GT数
+            
+            # 混同行列からTP, FN, FPを計算
+            tp = cm[idx, idx]
+            fp = cm[:, idx].sum() - tp
+            fn = cm[idx, :].sum() - tp
+            
+            detail_sum[class_id]['tp'] += tp
+            detail_sum[class_id]['fn'] += fn
+            detail_sum[class_id]['fp'] += fp
     
-    # --- 変更点: 全試行のF1スコアの平均を計算して返す ---
-    # 試行が一度も実行されなかった場合（num_try=0など）は0.0を返す
-    if not f1_scores:
-        return 0.0
+    # 実際に評価が行われた試行回数を取得
+    valid_tries = len(f1_scores)
+
+    # 試行が一度も有効に実行されなかった場合
+    if valid_tries == 0:
+        # GT数は事前に計算できるが、他の指標と合わせるため0で初期化
+        detail = {
+            class_id: {'precision': 0.0, 'recall': 0.0, 'f1': 0.0, 'gt': 0.0, 'tp': 0.0, 'fn': 0.0, 'fp': 0.0}
+            for class_id in unique_classes
+        }
+        return 0.0, detail
     
-    # リストに格納された全スコアの平均値を計算
+    # マクロF1スコアの平均値を計算
     average_f1 = np.mean(f1_scores)
     
-    return average_f1
+    # 詳細評価指標の平均値を計算
+    detail = {}
+    for class_id in sorted(detail_sum.keys()):
+        detail[class_id] = {
+            'precision': detail_sum[class_id]['precision'] / valid_tries,
+            'recall': detail_sum[class_id]['recall'] / valid_tries,
+            'f1': detail_sum[class_id]['f1'] / valid_tries,
+            'gt': detail_sum[class_id]['gt'] / valid_tries,
+            'tp': detail_sum[class_id]['tp'] / valid_tries,
+            'fn': detail_sum[class_id]['fn'] / valid_tries,
+            'fp': detail_sum[class_id]['fp'] / valid_tries,
+        }
+    
+    return average_f1, detail
 
 
 def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo=''):
@@ -490,7 +577,7 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
     except Exception as e:
         proc_success = False
         message = e
-        print(f'evaluate3data: {e}')
+        print(f'Error evaluate3data: {e}')
 
     if proc_success:
         # 評価結果を集計
@@ -538,10 +625,16 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
         elif task.metric == Task.Metric.AverageF1Score:
             # 特徴抽出の評価
             average_f1_scores = {}
+            average_f1_scores_detail = {}
             for result in result_list:
                 num_shots, num_try = result.parameter
-                average_f1_score = evaluateFeatureExtraction(result.answer, result.correct, num_shots, num_try)
-                average_f1_scores[result.data_type] = average_f1_score
+                average_f1_score, detail = evaluateFeatureExtraction(result.answer, result.correct, num_shots, num_try)
+                if not result.data_type in average_f1_scores:
+                    average_f1_scores[result.data_type] = []
+                average_f1_scores[result.data_type].append(average_f1_score)
+                if not result.data_type in average_f1_scores_detail:
+                    average_f1_scores_detail[result.data_type] = []
+                average_f1_scores_detail[result.data_type].append(detail)
 
 
         # 評価結果の詳細を出力
@@ -567,7 +660,7 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
                 elif task.metric == Task.Metric.RegistrationRate:
                     output_csv_file.write(f"{data_type.name},{len(registration_rate[data_type])},{np.average(np.array(registration_rate[data_type], float))}\n")
                 elif task.metric == Task.Metric.AverageF1Score:
-                    output_csv_file.write(f"{data_type.name},{len(average_f1_scores)},{average_f1_scores[data_type]}\n")
+                    output_csv_file.write(f"{data_type.name},{len(average_f1_scores[data_type])},{np.average(np.array(average_f1_scores[data_type]))}\n")
 
             # 詳細
             output_csv_file.write("\n")
@@ -623,6 +716,33 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
                             output_csv_file.write(f"{iRR},")
                             for iClass in range(mean_pr.shape[2]):
                                 output_csv_file.write(f"{mean_pr[iRR, 1, iClass]:.03},")
+                            output_csv_file.write("\n")
+            elif task.metric == Task.Metric.AverageF1Score:
+                output_csv_file.write("type,index,AverageF1Score\n")
+                for data_type in Task.DataType:
+                    for index in range(len(average_f1_scores[data_type])):
+                        output_csv_file.write(f"{result.data_type.name},{index},{average_f1_scores[data_type][index]}\n")
+
+                # 各クラスの詳細スコア
+                output_csv_file.write("\n")
+                for data_type in Task.DataType:
+                    if data_type in average_f1_scores_detail:
+                        for index in range(len(average_f1_scores_detail[data_type])):
+                            detail = average_f1_scores_detail[data_type][index]
+                            output_csv_file.write(f"detail,{data_type.name},{index}\n")
+                            output_csv_file.write("class,GT,TP,FN,FP,precision,recall,f1-score\n")
+                            for class_id in sorted(detail.keys()):
+                                metrics = detail[class_id]
+                                output_csv_file.write(
+                                    f"{class_id},"
+                                    f"{int(round(metrics.get('gt', 0)))},"  # GTは四捨五入して整数に
+                                    f"{metrics.get('tp', 0):.1f},"          # TPは四捨五入して小数点以下1桁に
+                                    f"{metrics.get('fn', 0):.1f},"          # FNは四捨五入して小数点以下1桁に
+                                    f"{metrics.get('fp', 0):.1f},"          # FPは四捨五入して小数点以下1桁に
+                                    f"{metrics.get('precision', 0.0):.4f},"
+                                    f"{metrics.get('recall', 0.0):.4f},"
+                                    f"{metrics.get('f1', 0.0):.4f}\n"
+                                )
                             output_csv_file.write("\n")
 
     # ユーザ毎の結果出力
@@ -681,7 +801,7 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
             elif task.metric == Task.Metric.AverageF1Score:
                 if proc_success:
                     if data_type in average_f1_scores:
-                        output_csv_file.write(f"{average_f1_scores[data_type]},")
+                        output_csv_file.write(f"{np.average(np.array(average_f1_scores[data_type], float))},")
                     else:
                         output_csv_file.write("-,")
                 else:
