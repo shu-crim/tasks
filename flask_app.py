@@ -1332,6 +1332,9 @@ def detail(task_id, user_id, dt, data_type):
     # 特徴抽出タスクの詳細表示
     elif task.metric == Task.Metric.AverageF1Score:
         # detal csvの読み込み
+        if not os.path.exists(file_path):
+            return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='詳細を表示するファイルが見つかりません')
+
         try:        
             with open(file_path, 'r', encoding='utf-8') as csvfile:
                 reader = csv.reader(csvfile)
@@ -1364,6 +1367,18 @@ def detail(task_id, user_id, dt, data_type):
                             detail[kind] = {}
                         detail[kind][task_index] = {}
                         iRow += 2 #ヘッダ行を飛ばす
+
+                        # カテゴリ名リストを取得
+                        try:
+                            dataset_path = os.path.join(Task.TASKS_DIR, task_id, data_type, FILENAME_DATASET_JSON)
+                            with open(dataset_path, 'r', encoding='utf-8') as f:
+                                dataset = json.load(f)
+                            class_name = {}
+                            for key, value in dataset["data"][task_index]["class_name"].items():
+                                class_name[int(key)] = value
+                        except:
+                            class_name = {}
+
                         while len(all_rows[iRow]) >= 8:
                             row = all_rows[iRow]
                             class_index = int(row[0])
@@ -1375,7 +1390,7 @@ def detail(task_id, user_id, dt, data_type):
                             recall = float(row[6])
                             f1_score = float(row[7])
                             detail[kind][task_index][class_index] = {
-                                "class_name": class_index,
+                                "class_name": class_name[class_index] if class_index in class_name else f"class{class_index}",
                                 "gt": gt,
                                 "tp": tp,
                                 "fn": fn,
@@ -1396,7 +1411,7 @@ def detail(task_id, user_id, dt, data_type):
 
         # ゴール達成していなければ非表示
         if data_type == "test":
-            if stats["train"] > task.goal or stats["valid"] > task.goal or stats["test"] > task.goal:
+            if stats["train"] < task.goal or stats["valid"] < task.goal or stats["test"] < task.goal:
                 return render_template(f'source.html', service_name=SETTING["name"]["service"], filename='Goalを達成した場合のみ表示可能です')
             
         return render_template(f'detail_feature-extraction.html',
