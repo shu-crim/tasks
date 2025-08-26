@@ -723,7 +723,7 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
                 output_csv_file.write("type,index,AverageF1Score\n")
                 for data_type in average_f1_scores.keys():
                     for index in range(len(average_f1_scores[data_type])):
-                        output_csv_file.write(f"{result.data_type.name},{index},{average_f1_scores[data_type][index]}\n")
+                        output_csv_file.write(f"{data_type.name},{index},{average_f1_scores[data_type][index]}\n")
 
                 # 各クラスの詳細スコア
                 output_csv_file.write("\n")
