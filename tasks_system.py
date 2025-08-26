@@ -651,16 +651,18 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
             elif task.metric == Task.Metric.AverageF1Score:
                 output_csv_file.write("type,num_data,AverageF1Score\n")
 
-            for data_type in Task.DataType:
-                if task.metric == Task.Metric.Accuracy:
-                    output_csv_file.write(f"{data_type.name},{num_true[data_type] + num_false[data_type]},{num_true[data_type]},{num_false[data_type]},{num_true[data_type]/num_data if num_data > 0 else '-'}\n")
-                elif task.metric == Task.Metric.MAE:
-                    if data_type in abs_errors:
-                        output_csv_file.write(f"{data_type.name},{len(abs_errors[data_type])},{np.average(np.array(abs_errors[data_type], float))}\n")
-                elif task.metric == Task.Metric.RegistrationRate:
-                    output_csv_file.write(f"{data_type.name},{len(registration_rate[data_type])},{np.average(np.array(registration_rate[data_type], float))}\n")
-                elif task.metric == Task.Metric.AverageF1Score:
+            if task.metric == Task.Metric.AverageF1Score:
+                for data_type in average_f1_scores.keys():
                     output_csv_file.write(f"{data_type.name},{len(average_f1_scores[data_type])},{np.average(np.array(average_f1_scores[data_type]))}\n")
+            else:
+                for data_type in Task.DataType:
+                    if task.metric == Task.Metric.Accuracy:
+                        output_csv_file.write(f"{data_type.name},{num_true[data_type] + num_false[data_type]},{num_true[data_type]},{num_false[data_type]},{num_true[data_type]/num_data if num_data > 0 else '-'}\n")
+                    elif task.metric == Task.Metric.MAE:
+                        if data_type in abs_errors:
+                            output_csv_file.write(f"{data_type.name},{len(abs_errors[data_type])},{np.average(np.array(abs_errors[data_type], float))}\n")
+                    elif task.metric == Task.Metric.RegistrationRate:
+                        output_csv_file.write(f"{data_type.name},{len(registration_rate[data_type])},{np.average(np.array(registration_rate[data_type], float))}\n")
 
             # 詳細
             output_csv_file.write("\n")
@@ -719,31 +721,30 @@ def ProcOneUser(task_id, user_name, new_filename, attachment_path, now, memo='')
                             output_csv_file.write("\n")
             elif task.metric == Task.Metric.AverageF1Score:
                 output_csv_file.write("type,index,AverageF1Score\n")
-                for data_type in Task.DataType:
+                for data_type in average_f1_scores.keys():
                     for index in range(len(average_f1_scores[data_type])):
                         output_csv_file.write(f"{result.data_type.name},{index},{average_f1_scores[data_type][index]}\n")
 
                 # 各クラスの詳細スコア
                 output_csv_file.write("\n")
-                for data_type in Task.DataType:
-                    if data_type in average_f1_scores_detail:
-                        for index in range(len(average_f1_scores_detail[data_type])):
-                            detail = average_f1_scores_detail[data_type][index]
-                            output_csv_file.write(f"detail,{data_type.name},{index}\n")
-                            output_csv_file.write("class,GT,TP,FN,FP,precision,recall,f1-score\n")
-                            for class_id in sorted(detail.keys()):
-                                metrics = detail[class_id]
-                                output_csv_file.write(
-                                    f"{class_id},"
-                                    f"{int(round(metrics.get('gt', 0)))},"  # GTは四捨五入して整数に
-                                    f"{metrics.get('tp', 0):.1f},"          # TPは四捨五入して小数点以下1桁に
-                                    f"{metrics.get('fn', 0):.1f},"          # FNは四捨五入して小数点以下1桁に
-                                    f"{metrics.get('fp', 0):.1f},"          # FPは四捨五入して小数点以下1桁に
-                                    f"{metrics.get('precision', 0.0):.4f},"
-                                    f"{metrics.get('recall', 0.0):.4f},"
-                                    f"{metrics.get('f1', 0.0):.4f}\n"
-                                )
-                            output_csv_file.write("\n")
+                for data_type in average_f1_scores_detail.keys():
+                    for index in range(len(average_f1_scores_detail[data_type])):
+                        detail = average_f1_scores_detail[data_type][index]
+                        output_csv_file.write(f"detail,{data_type.name},{index}\n")
+                        output_csv_file.write("class,GT,TP,FN,FP,precision,recall,f1-score\n")
+                        for class_id in sorted(detail.keys()):
+                            metrics = detail[class_id]
+                            output_csv_file.write(
+                                f"{class_id},"
+                                f"{int(round(metrics.get('gt', 0)))},"  # GTは四捨五入して整数に
+                                f"{metrics.get('tp', 0):.1f},"          # TPは四捨五入して小数点以下1桁に
+                                f"{metrics.get('fn', 0):.1f},"          # FNは四捨五入して小数点以下1桁に
+                                f"{metrics.get('fp', 0):.1f},"          # FPは四捨五入して小数点以下1桁に
+                                f"{metrics.get('precision', 0.0):.4f},"
+                                f"{metrics.get('recall', 0.0):.4f},"
+                                f"{metrics.get('f1', 0.0):.4f}\n"
+                            )
+                        output_csv_file.write("\n")
 
     # ユーザ毎の結果出力
     csv_path = os.path.join(Task.TASKS_DIR, task_id, Task.OUTPUT_DIR_NAME, "user", user_name + ".csv")
